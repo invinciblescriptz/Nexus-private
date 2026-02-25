@@ -10,24 +10,27 @@ local Players           = game:GetService("Players")
 local LocalPlayer       = Players.LocalPlayer
 local Workspace         = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
 local RunService        = game:GetService("RunService")
 
 local muscleEvent = LocalPlayer:WaitForChild("muscleEvent", 8)
 
 -- =============================================================
--- States
+-- Global States & Running Flag
 -- =============================================================
+getgenv().NexusRunning = true
+
 local states = {
-    AutoPushups     = false,
-    AutoWeight      = false,
-    AutoHandstands  = false,
-    FastPunch       = false,
-    InfiniteJump    = false,
-    AutoRebirth     = false,
+    AutoPushups       = false,
+    AutoWeight        = false,
+    AutoHandstands    = false,
+    FastPunch         = false,
+    InfiniteJump      = false,
+    AutoRebirth       = false,
     AutoRebirthTarget = false,
-    KillAura        = false,
-    AutoKillSelected = false,
-    FastStrength    = false,
+    KillAura          = false,
+    AutoKillSelected  = false,
+    FastStrength      = false,
 }
 
 -- Rock farm globals
@@ -35,75 +38,85 @@ getgenv().rockFarmActive         = false
 getgenv().selectedRockDurability = 0
 
 -- =============================================================
--- Helper: Kill a single player
+-- Infinite Jump
+-- =============================================================
+local InfiniteJumpConnection = nil
+
+local function toggleInfiniteJump(enabled)
+    if enabled then
+        if InfiniteJumpConnection then return end
+        InfiniteJumpConnection = UserInputService.JumpRequest:Connect(function()
+            if not states.InfiniteJump or not getgenv().NexusRunning then return end
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char and char:FindFirstChild("Humanoid") then
+                    char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end)
+        end)
+        print("[Nexus] Infinite Jump → ON")
+    else
+        if InfiniteJumpConnection then
+            InfiniteJumpConnection:Disconnect()
+            InfiniteJumpConnection = nil
+            print("[Nexus] Infinite Jump → OFF")
+        end
+    end
+end
+
+-- =============================================================
+-- Kill Player Function
 -- =============================================================
 local function killPlayer(target)
     pcall(function()
         if not target or target == LocalPlayer or not target.Character then return end
-        
         local tChar = target.Character
         local tRoot = tChar:FindFirstChild("HumanoidRootPart")
         local tHum  = tChar:FindFirstChild("Humanoid")
-        
         if not tRoot or not tHum or tHum.Health <= 0 then return end
-        
+
         local myChar = LocalPlayer.Character
         if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
-        
+
         local myRoot = myChar.HumanoidRootPart
-        local distance = (myRoot.Position - tRoot.Position).Magnitude
-        
-        if distance > 35 then return end  -- aura range (adjustable)
-        
-        -- Face target
+        if (myRoot.Position - tRoot.Position).Magnitude > 35 then return end
+
         myRoot.CFrame = CFrame.lookAt(myRoot.Position, tRoot.Position)
-        
-        -- Equip punch tool
+
         local punch = myChar:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch")
         if punch and punch.Parent ~= myChar then
             myChar.Humanoid:EquipTool(punch)
         end
-        
-        -- Spam punches (remote is still the most reliable method in 2026)
+
         if muscleEvent then
-            for _ = 1, 8 do
+            for _ = 1, 5 do  -- reduced from 8 for lower detection
                 muscleEvent:FireServer("punch", "leftHand")
                 muscleEvent:FireServer("punch", "rightHand")
-                task.wait(0.01)
+                task.wait(0.012 + math.random() * 0.018)
             end
         end
     end)
 end
 
 -- =============================================================
--- Auto Rep (Pushups / Weight / Handstands)
+-- Auto Rep Function
 -- =============================================================
 local function startAutoRep(toolName, stateKey)
     task.spawn(function()
-        while states[stateKey] do
+        while states[stateKey] and getgenv().NexusRunning do
             pcall(function()
                 local char = LocalPlayer.Character
                 if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
                     task.wait(1.5) return
                 end
-                
                 local tool = LocalPlayer.Backpack:FindFirstChild(toolName) or char:FindFirstChild(toolName)
                 if tool and tool.Parent ~= char then
                     char.Humanoid:EquipTool(tool)
                 end
-                
                 if muscleEvent then muscleEvent:FireServer("rep") end
             end)
-            task.wait(0.025)
+            task.wait(0.025 + math.random() * 0.01)
         end
-        
-        -- Unequip on disable
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild(toolName) then
-                char[toolName].Parent = LocalPlayer.Backpack
-            end
-        end)
     end)
 end
 
@@ -114,10 +127,11 @@ local KillerTab = window:AddTab("Killer")
 local FarmTab   = window:AddTab("Farm")
 
 local toolsFolder    = FarmTab:AddFolder("Tools")
+local movementFolder = FarmTab:AddFolder("Movement")
 local rockFarmFolder = FarmTab:AddFolder("Rock Farm")
 
 -- =============================================================
--- Farm → Tools
+-- Tools Folder
 -- =============================================================
 toolsFolder:AddSwitch("Auto Pushups", function(s)
     states.AutoPushups = s
@@ -138,19 +152,16 @@ toolsFolder:AddSwitch("Auto Punch (Fast)", function(state)
     states.FastPunch = state
     if state then
         task.spawn(function()
-            while states.FastPunch do
+            while states.FastPunch and getgenv().NexusRunning do
                 pcall(function()
                     if muscleEvent then
                         muscleEvent:FireServer("punch", "rightHand")
                         muscleEvent:FireServer("punch", "leftHand")
                     end
-                    
                     local char = LocalPlayer.Character
-                    if char then
+                    if char and char:FindFirstChild("Humanoid") then
                         local punch = char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch")
-                        if punch and punch.Parent ~= char then
-                            char.Humanoid:EquipTool(punch)
-                        end
+                        if punch and punch.Parent ~= char then char.Humanoid:EquipTool(punch) end
                         if punch and punch.Parent == char then
                             local atk = punch:FindFirstChild("attackTime")
                             if atk and atk:IsA("NumberValue") then atk.Value = 0.01 end
@@ -158,7 +169,7 @@ toolsFolder:AddSwitch("Auto Punch (Fast)", function(state)
                         end
                     end
                 end)
-                task.wait(0.035)
+                task.wait(0.035 + math.random() * 0.015)
             end
         end)
     end
@@ -171,16 +182,14 @@ toolsFolder:AddButton("Anti Lag (Boost FPS)", function()
     Lighting.ClockTime = 12
     Lighting.FogEnd = 9999
     Lighting.FogStart = 0
-    
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("ParticleEmitter") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or
            v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("SunRaysEffect") then
             v.Enabled = false
         end
     end
-    
     settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    print("Anti-Lag activated → check FPS (Shift+F5)")
+    print("[Nexus] Anti-Lag Activated")
 end)
 
 toolsFolder:AddButton("Free AutoLift Gamepass", function()
@@ -190,54 +199,53 @@ toolsFolder:AddButton("Free AutoLift Gamepass", function()
             local owned = LocalPlayer:FindFirstChild("ownedGamepasses") or Instance.new("Folder")
             owned.Name = "ownedGamepasses"
             owned.Parent = LocalPlayer
-            
             for _, gp in pairs(gpFolder:GetChildren()) do
                 local val = Instance.new("IntValue")
                 val.Name = gp.Name
                 val.Value = gp.Value
                 val.Parent = owned
             end
-            print("Gamepasses spoofed (may require relog)")
-        else
-            print("gamepassIds not found")
+            print("[Nexus] Gamepasses Spoofed (relog recommended)")
         end
     end)
 end)
 
 -- =============================================================
--- Rock Farm Loop (fixed Tiny Island activation)
+-- Movement Folder
+-- =============================================================
+movementFolder:AddSwitch("Infinite Jump", function(state)
+    states.InfiniteJump = state
+    toggleInfiniteJump(state)
+end)
+
+-- =============================================================
+-- Rock Farm Loop
 -- =============================================================
 task.spawn(function()
-    while true do
+    while getgenv().NexusRunning do
         if not getgenv().rockFarmActive then
             task.wait(0.5)
             continue
         end
-        
         pcall(function()
             local char = LocalPlayer.Character
             if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
                 task.wait(1) return
             end
-            
+
             local dur = LocalPlayer:FindFirstChild("Durability")
-            -- Skip durability check for Tiny Island (0)
             if getgenv().selectedRockDurability > 0 then
                 if not dur or dur.Value < getgenv().selectedRockDurability then
                     task.wait(0.4) return
                 end
             end
-            
-            -- Equip punch
+
             local hum = char:FindFirstChild("Humanoid")
-            if hum then
-                local punch = char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch")
-                if punch and punch.Parent ~= char then
-                    hum:EquipTool(punch)
-                end
+            local punch = hum and (char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"))
+            if punch and punch.Parent ~= char then
+                hum:EquipTool(punch)
             end
-            
-            -- Touch rocks
+
             for _, obj in pairs(Workspace.machinesFolder:GetDescendants()) do
                 if obj.Name == "neededDurability" and obj:IsA("IntValue") and obj.Value == getgenv().selectedRockDurability then
                     local rock = obj.Parent:FindFirstChild("Rock")
@@ -255,50 +263,51 @@ task.spawn(function()
                     end
                 end
             end
-            
+
             if muscleEvent then
                 muscleEvent:FireServer("punch", "leftHand")
                 muscleEvent:FireServer("punch", "rightHand")
             end
         end)
-        
         task.wait(0.12 + math.random()/20)
     end
 end)
 
--- Rock Farm Switches
-rockFarmFolder:AddSwitch("Farm Tiny Island Rock (0)", function(s)
+-- Rock Farm Helper
+local function toggleRockFarm(dur, s)
     getgenv().rockFarmActive = s
-    getgenv().selectedRockDurability = s and 0 or 0
-    print(s and "[Rock Farm] Tiny Island → ON" or "[Rock Farm] OFF")
-end)
+    getgenv().selectedRockDurability = s and dur or 0
+    print(s and ("[Nexus] Rock Farm " .. dur .. " → ON") or "[Nexus] Rock Farm OFF")
+end
 
-rockFarmFolder:AddSwitch("Farm Starter Island Rock (100)", function(s)
-    getgenv().rockFarmActive = s
-    getgenv().selectedRockDurability = s and 100 or 0
-    print(s and "[Rock Farm] Starter Island → ON" or "[Rock Farm] OFF")
-end)
-
--- (other rock switches remain the same, just copy-paste pattern)
+rockFarmFolder:AddSwitch("Farm Tiny Island Rock (0)", function(s) toggleRockFarm(0, s) end)
+rockFarmFolder:AddSwitch("Farm Starter Island Rock (100)", function(s) toggleRockFarm(100, s) end)
+rockFarmFolder:AddSwitch("Farm Legend Beach Rock (5000)", function(s) toggleRockFarm(5000, s) end)
+rockFarmFolder:AddSwitch("Farm Frost Gym Rock (150k)", function(s) toggleRockFarm(150000, s) end)
+rockFarmFolder:AddSwitch("Farm Mythical Gym Rock (400k)", function(s) toggleRockFarm(400000, s) end)
+rockFarmFolder:AddSwitch("Farm Eternal Gym Rock (750k)", function(s) toggleRockFarm(750000, s) end)
+rockFarmFolder:AddSwitch("Farm Legend Gym Rock (1M)", function(s) toggleRockFarm(1000000, s) end)
+rockFarmFolder:AddSwitch("Farm Muscle King Gym Rock (5M)", function(s) toggleRockFarm(5000000, s) end)
+rockFarmFolder:AddSwitch("Farm Ancient Jungle Rock (10M)", function(s) toggleRockFarm(10000000, s) end)
 
 rockFarmFolder:AddButton("STOP All Rock Farming", function()
     getgenv().rockFarmActive = false
     getgenv().selectedRockDurability = 0
-    print("[Rock Farm] All farming stopped")
+    print("[Nexus] All Rock Farming Stopped")
 end)
 
 -- =============================================================
--- Killer Tab Features
+-- Killer Tab
 -- =============================================================
 KillerTab:AddSwitch("Kill All Players (Aura)", function(state)
     states.KillAura = state
     if state then
         task.spawn(function()
-            while states.KillAura do
+            while states.KillAura and getgenv().NexusRunning do
                 for _, plr in ipairs(Players:GetPlayers()) do
                     killPlayer(plr)
                 end
-                task.wait(0.08 + math.random() * 0.04)  -- slight random delay = less detectable
+                task.wait(0.12 + math.random() * 0.06)
             end
         end)
     end
@@ -306,32 +315,29 @@ end)
 
 -- Auto Kill Selected
 local selectedTarget = nil
-
 local playerDropdown = KillerTab:AddDropdown("Select Target Player", function(val)
-    selectedTarget = val:match("^([^|]+)") or val  -- extract username
+    selectedTarget = val and val:match("^([^|]+)") or nil
 end)
 
 KillerTab:AddSwitch("Auto Kill Selected", function(state)
     states.AutoKillSelected = state
     if state and selectedTarget then
         task.spawn(function()
-            while states.AutoKillSelected do
+            while states.AutoKillSelected and getgenv().NexusRunning do
                 local plr = Players:FindFirstChild(selectedTarget)
-                if plr then
-                    killPlayer(plr)
-                end
-                task.wait(0.08 + math.random() * 0.04)
+                if plr then killPlayer(plr) end
+                task.wait(0.12 + math.random() * 0.06)
             end
         end)
     end
 end)
 
--- Refresh player list every 5 seconds
+-- Player list refresh
 task.spawn(function()
-    while true do
+    while getgenv().NexusRunning do
         local opts = {}
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Name then
+            if plr ~= LocalPlayer then
                 table.insert(opts, plr.Name .. " | " .. (plr.DisplayName or plr.Name))
             end
         end
@@ -339,3 +345,16 @@ task.spawn(function()
         task.wait(5)
     end
 end)
+
+-- Initial population
+do
+    local opts = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            table.insert(opts, plr.Name .. " | " .. (plr.DisplayName or plr.Name))
+        end
+    end
+    playerDropdown:SetValues(opts)
+end
+
+print("✅ Nexus Private Script Loaded Successfully")
